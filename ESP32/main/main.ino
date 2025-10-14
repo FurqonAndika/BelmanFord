@@ -1,25 +1,53 @@
+#define ADC_PIN 1          
+#define NUM_SAMPLES 200     
+#define ADC_RESOLUTION 4095 
+#define VREF 3.3            
 
-#define SENSOR_PIN 1
+#define VOLTAGE_FACTOR 2.0  
 
-float sensorValue = 0.0;
-float temp =0; 
+// Koefisien kalibrasi hasil pengukuran kamu
+#define CAL_A 0.85   // slope
+#define CAL_B 0.22   // offset
+
 void setup() {
-  // put your setup code here, to run once:
-  Serial.begin(9600);
-  pinMode(SENSOR_PIN, INPUT);
+  Serial.begin(115200);
+  analogReadResolution(12);
+  Serial.println("Kalibrasi ADC dengan filter linear aktif...");
 }
 
 void loop() {
-  // // put your main code here, to run repeatedly:
-  //   for (int i = 0; i < 50; i++) {
-  //     temp += analogRead(SENSOR_PIN);
-  //     delay(1);
-  //   }
-  //   sensorValue = temp / 50.0;
-  //   temp =0;
-  //   delay(5);
-  Serial.println("hello");
-}   
+  long totalADC = 0;
 
+  for (int i = 0; i < NUM_SAMPLES; i++) {
+    totalADC += analogRead(ADC_PIN);
+    delayMicroseconds(200);
+  }
 
+  float avgADC = totalADC / (float)NUM_SAMPLES;
 
+  // Tegangan hasil pembacaan ADC
+  float voltageADC = (avgADC / ADC_RESOLUTION) * VREF;
+  
+  // Tegangan input hasil pembagi tegangan
+  float voltageMeasured = voltageADC * VOLTAGE_FACTOR;
+
+  // Terapkan filter kalibrasi
+  float voltageFiltered = (CAL_A * voltageMeasured) + CAL_B;
+
+  // Batasi agar tidak lebih dari 4.2 V
+  // if (voltageFiltered > 4.2) voltageFiltered = 4.2;
+  if (voltageFiltered < 0) voltageFiltered = 0;
+  
+
+  // Serial.print("ADC: ");
+  // Serial.print(avgADC);
+  // Serial.print(" | Vadc: ");
+  // Serial.print(voltageADC, 2);
+  // Serial.print(" | Vin (measured): ");
+  // Serial.print(voltageMeasured, 2);
+  // Serial.print(" | Vin (filtered): ");
+  
+  Serial.println(voltageFiltered, 2);
+
+  delay(10);
+}
