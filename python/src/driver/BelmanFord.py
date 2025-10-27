@@ -47,17 +47,36 @@ def print_path(table, src, dest):
 
 if __name__ == "__main__":
     
-    # Example graph
-    graph_example = {
-        'A': [('F', 3), ('B', 2), ('D', 5)],
-        'B': [('E', 1)],
-        'C': [('B', 7), ('G', 4)],
-        'D': [('E', 1)],
-        'E': [('C', -3), ('G', 3)],
-        'F': [('B', -4)],
-        'G': [('D', -1)],
+    # # Example graph
+    # graph_example = {
+    #     'A': [('F', 3), ('B', 2), ('D', 5)],
+    #     'B': [('E', 1)],
+    #     'C': [('B', 7), ('G', 4)],
+    #     'D': [('E', 1)],
+    #     'E': [('C', -3), ('G', 3)],
+    #     'F': [('B', -4)],
+    #     'G': [('D', -1)],
 
-    }
+    # }
+
+    graph_example = {
+    'A': [('B', 4), ('C', 2), ('D', 3)],
+    'B': [('E', 4)],
+    'C': [('F', 3)],
+    'D': [('G', 5)],
+    'E': [('H', 3)],
+    'F': [('I', 5)],
+    'G': [('J', 2)],
+    'H': [('K', 1), ('L', 6)],
+    'I': [('K', 2), ('L', 6)],
+    'J': [('K', 7), ('L', 1)],
+    'K': [('M', 2)],
+    'L': [('N', 1)],
+    'M': [('O', 3)],
+    'N': [('O', 4)],
+    'O': []
+}
+
 
     # Compute the shortest paths from source vertex 'A'
     source = 'A'
@@ -67,7 +86,7 @@ if __name__ == "__main__":
     if output_table:
         print_table(output_table)
         # Example: Print the shortest path from A to G
-        print_path(output_table, source, 'G')
+        print_path(output_table, source, 'O')
 
     else:
         print("No valid shortest path table generated due to negative weight cycle.") 

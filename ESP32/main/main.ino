@@ -32,7 +32,7 @@ void loop() {
   float voltageMeasured = voltageADC * VOLTAGE_FACTOR;
 
   // Terapkan filter kalibrasi
-  float voltageFiltered = (CAL_A * voltageMeasured) + CAL_B;
+  float voltageFiltered = (CAL_A * voltageMeasured) + CAL_B+0.02;
 
   // Batasi agar tidak lebih dari 4.2 V
   // if (voltageFiltered > 4.2) voltageFiltered = 4.2;
