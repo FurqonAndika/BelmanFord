@@ -1,63 +1,55 @@
-# run.py
+import socket
 import json
 import subprocess
-import os
-import socket
-from node import DiscoveryNode
+from discovery import DiscoveryNode
+from arduino_serial import ArduinoSerialReader
+
+#from util import build_graph, reconstruct_path
+import json
+# from eeBellmanFord import eebellman_ford
 
 PORT = 5005
 
+
 def get_ip():
-    try:
-        out = subprocess.check_output(["hostname", "-I"]).decode().strip()
-        return out.split()[0]
-    except:
-        return None
+    return subprocess.check_output(["hostname", "-I"]).decode().split()[0]
 
-def get_mac():
-    path = "/sys/class/net/wlan0/address"
-    if os.path.exists(path):
-        with open(path) as f:
-            return f.read().strip()
-    return None
-
-def run_node():
+def run():
     ip = get_ip()
-    mac = get_mac()
-    if ip is None or mac is None:
-        print("[ERROR] Can't determine IP or MAC. Run on Raspberry Pi with wlan0.")
-        return
-
     node_id = int(ip.split(".")[-1])
+
     neighbors = json.load(open("neighbors.json"))
 
-    print(f"Starting node {node_id} (IP {ip}, MAC {mac})")
-    node = DiscoveryNode(node_id, ip, mac, neighbors)
+    arduino = ArduinoSerialReader()
+    arduino.connect()
 
-    # create UDP socket to receive packets on all interfaces
+    node = DiscoveryNode(node_id, ip, neighbors, arduino)
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("", PORT))
 
-    # If origin node (1) start discovery
     if node_id == 1:
-        node.send_discovery()
+        node.start()
 
-    print("Listening for UDP packets...")
+    print(f"[NODE {node_id}] Listening...")
+
     while True:
-        data, addr = sock.recvfrom(8192)
-        try:
-            msg = json.loads(data.decode())
-        except:
-            continue
-        mtype = msg.get("type")
-        last_ip = addr[0]
+        data, addr = sock.recvfrom(4096)
+        msg = json.loads(data.decode())
 
-        if mtype == "DISCOVERY":
-            # ensure incoming msg has fields, pass last_ip for forward decisions
-            node.handle_discovery(msg, last_ip)
-        elif mtype == "DISCOVERY_RESPONSE":
+        if msg["type"] == "DISCOVERY":
+            node.handle_discovery(msg, addr[0])
+        
+        elif msg["type"] == "RESPONSE":
             node.handle_response(msg)
-        # else ignore unknown types
+            
+
+         
 
 if __name__ == "__main__":
-    run_node()
+    run()
+    # graph = build_graph("neighbors.json", "power.json")
+    # table = eebellman_ford(graph, src="1")
+    # path = reconstruct_path(table, src="1", dest="4")
+    # print("choosen path ",path)
+

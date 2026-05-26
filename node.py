@@ -1,105 +1,118 @@
-# node.py
 import json
 import random
 from udp import send_packet
-from rssi import get_rssi
+
+MAX_TTL_MARGIN = 5
+
 
 class DiscoveryNode:
     def __init__(self, node_id, ip, mac, neighbors):
         self.node_id = int(node_id)
         self.ip = ip
         self.mac = mac
-        self.neighbors = neighbors           # dict parsed from neighbors.json
-        self.seen_requests = set()           # set of (origin, seq) that we've processed
-        self.rssi_table = {}                 # for node 1: {node_id: rssi}
-        # IP prefix assumption (your network): 192.168.50.X
-        self.ip_prefix = ".".join(self.ip.split(".")[:3]) + "."
+        self.neighbors = neighbors
 
-    def ip_of(self, node_id):
-        """Return IP string for node id (assumes fixed subnet 192.168.50.X)."""
-        return f"{self.ip_prefix}{int(node_id)}"
+        # FIX: seen berdasarkan (origin, seq, previous_hop)
+        self.seen_requests = set()
+
+        # hanya dipakai di node origin (node 1)
+        self.rssi_table = {}
+
+        self.id_to_ip = self._build_id_ip_map()
+        self.total_nodes = len(self.neighbors)
 
     # -------------------------
-    # Node 1 calls this to start discovery
+    # Utility
+    # -------------------------
+    def _build_id_ip_map(self):
+        id_ip = {}
+        for nid in self.neighbors.keys():
+            id_ip[int(nid)] = f"192.168.50.{nid}"
+        return id_ip
+
+    def ip_of(self, node_id):
+        return self.id_to_ip.get(int(node_id))
+
+    # -------------------------
+    # Node 1 memulai discovery
     # -------------------------
     def send_discovery(self):
         seq = random.randint(100000, 999999)
+
         pkt = {
             "type": "DISCOVERY",
             "origin": self.node_id,
             "seq": seq,
-            "path": [self.node_id],       # list of node ids
-            "rssi_path": [],              # list of RSSI values observed at each hop (A->next, next->next,...)
+            "path": [self.node_id],
+            "rssi_path": [],
             "sender_id": self.node_id,
             "sender_mac": self.mac,
-            "ttl": len(self.neighbors) + 10  # safe large TTL
+            "ttl": self.total_nodes + MAX_TTL_MARGIN
         }
-        print(f"[{self.node_id}] Sending DISCOVERY seq={seq}")
-        # send to direct allowed neighbors
+
+        print(f"[{self.node_id}] START DISCOVERY seq={seq}")
+
         for nb_ip in self.neighbors[str(self.node_id)]["allowed_ip"]:
             send_packet(nb_ip, pkt)
 
     # -------------------------
-    # Handle incoming DISCOVERY
-    # last_ip = ip address of who sent this packet to us (from UDP recv)
+    # Handle DISCOVERY
     # -------------------------
-    def handle_discovery(self, msg, last_ip):
+    def handle_discovery(self, msg, last_ip, rssi):
+        print(msg)
         origin = msg["origin"]
         seq = msg["seq"]
-        key = (origin, seq)
+        path = msg["path"]
+        ttl = msg["ttl"]
 
-        # prevent reprocessing same (origin,seq)
+        prev_hop = path[-1]
+        key = (origin, seq, prev_hop)
+
+        # Cegah proses discovery yang sama lewat hop yang sama
         if key in self.seen_requests:
             return
-        # also prevent if we are already in path (loop safety)
-        if self.node_id in msg.get("path", []):
-            return
-
         self.seen_requests.add(key)
 
-        # measure RSSI from the sender (sender_mac included in msg)
-        sender_mac = msg.get("sender_mac")
-        rssi = None
-        if sender_mac:
-            rssi = get_rssi(sender_mac)    # real RSSI on Raspi
-        else:
-            rssi = None
+        # Loop protection
+        if self.node_id in path:
+            return
 
-        # build new path/rssi_path
-        new_path = msg["path"] + [self.node_id]
+        # Update path
+        new_path = path + [self.node_id]
         new_rssi_path = msg.get("rssi_path", []) + [rssi]
+        ttl -= 1
 
-        # decrement ttl
-        ttl = msg.get("ttl", 10) - 1
+        # Cari neighbor yang valid untuk diteruskan
+        candidates = []
+        for ip in self.neighbors[str(self.node_id)]["allowed_ip"]:
+            if ip == last_ip:
+                continue
+            nid = int(ip.split(".")[-1])
+            if nid in new_path:
+                continue
+            candidates.append((nid, ip))
 
-        # If this node is the LAST (leaf) — decide leaf by neighbors: if all neighbors are the node that sent this packet
-        allowed = self.neighbors.get(str(self.node_id), {}).get("allowed_ip", [])
-        # determine whether there exists a neighbor ip other than last_ip
-        forwardable = any(nb != last_ip for nb in allowed)
-
-        # If no forwardable neighbor OR ttl exhausted -> prepare response and send back via reverse path
-        if not forwardable or ttl <= 0:
-            # This node must send a response back using the recorded path
+        # -------------------------
+        # LEAF NODE → KIRIM RESPONSE
+        # -------------------------
+        if not candidates or ttl <= 0:
             response = {
                 "type": "DISCOVERY_RESPONSE",
                 "origin": origin,
                 "seq": seq,
-                "path": new_path,        # forward path from origin .. this node
+                "path": new_path,
                 "rssi_path": new_rssi_path
             }
-            print(f"[{self.node_id}] Leaf or TTL=0, sending response back for origin {origin} seq={seq}")
-            # send to previous hop in path (reverse)
-            if len(new_path) >= 2:
-                prev_node = new_path[-2]
-                prev_ip = self.ip_of(prev_node)
-                send_packet(prev_ip, response)
-            else:
-                # if no prev (rare) and origin==this node, store directly
-                if origin == self.node_id:
-                    self._store_response(response)
+
+            print(f"[{self.node_id}] LEAF → RESPONSE path={new_path}")
+
+            prev_node = new_path[-2]
+            send_packet(self.ip_of(prev_node), response)
             return
 
-        # Otherwise forward discovery to neighbors (except the node we got it from)
+        # -------------------------
+        # FORWARD DISCOVERY
+        # -------------------------
         forward_pkt = {
             "type": "DISCOVERY",
             "origin": origin,
@@ -111,62 +124,26 @@ class DiscoveryNode:
             "ttl": ttl
         }
 
-        # send our own partial response to previous hop as well so A can start collecting partials early
-        # (optional) — we can also only have leaves reply. We'll still send our own local response to prev.
-        response_self = {
-            "type": "DISCOVERY_RESPONSE",
-            "origin": origin,
-            "seq": seq,
-            "path": new_path,
-            "rssi_path": new_rssi_path
-        }
-        # reply back to previous hop (if exists)
-        if len(new_path) >= 2:
-            prev_node = new_path[-2]
-            prev_ip = self.ip_of(prev_node)
-            send_packet(prev_ip, response_self)
-
-        # forward to other neighbors
-        for nb_ip in allowed:
-            if nb_ip == last_ip:
-                continue
-            send_packet(nb_ip, forward_pkt)
+        for nid, ip in candidates:
+            send_packet(ip, forward_pkt)
 
     # -------------------------
-    # Handle incoming DISCOVERY_RESPONSE
-    # This will be forwarded along reverse path until it reaches origin
+    # Handle RESPONSE
     # -------------------------
     def handle_response(self, msg):
+        print(msg)
         origin = msg["origin"]
-        seq = msg["seq"]
-        path = msg.get("path", [])
-        rssi_path = msg.get("rssi_path", [])
+        path = msg["path"]
+        rssi_path = msg["rssi_path"]
 
-        # If this node is the origin for which the response is intended
-        if origin == self.node_id:
-            # store rssi info for final processing (Bellman-Ford)
-            sender = path[-1]
-            self.rssi_table[sender] = rssi_path
-            print(f"[{self.node_id}] Received final response from node {sender}, rssi_path={rssi_path}")
+        # Jika sampai di node origin
+        if self.node_id == origin:
+            leaf = path[-1]
+            self.rssi_table[tuple(path)] = rssi_path
+            print(f"[{self.node_id}] FINAL PATH {path} RSSI={rssi_path}")
             return
 
-        # Otherwise forward response to previous node in path (i.e., node with lower index)
-        # Find our position in path
-        if self.node_id not in path:
-            # Not in path? ignore
-            return
+        # Forward ke node sebelumnya
         idx = path.index(self.node_id)
-        if idx == 0:
-            # weird: origin is before us, but not equal; ignore
-            return
         prev_node = path[idx - 1]
-        prev_ip = self.ip_of(prev_node)
-        # forward unchanged response
-        send_packet(prev_ip, msg)
-
-    # -------------------------
-    # internal: store response if origin == self.node_id (fallback)
-    # -------------------------
-    def _store_response(self, response):
-        sender = response["path"][-1]
-        self.rssi_table[sender] = response.get("rssi_path", [])
+        send_packet(self.ip_of(prev_node), msg)

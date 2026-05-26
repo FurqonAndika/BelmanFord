@@ -1,4 +1,4 @@
-def get_rssi(mac):
-    # kamu isi sesuai command di Raspberry
-    # contoh untuk wpa_supplicant log
-    return -60
+def get_rssi(arduino):
+    value = arduino.read_voltage()
+    print(f"[RSSI READ] Voltage={value}")
+    return value
